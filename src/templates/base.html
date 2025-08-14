@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>{% block title %}IoT Project{% endblock %}</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+    {% block head %}{% endblock %}
+</head>
+<body>
+    <main>
+        {% block content %}{% endblock %}
+    </main>
+    <footer>
+        {% block footer %}© 2025 IoT Project, Andrew Koh and Vladislav Colpman{% endblock %}
+    </footer>
+</body>
+</html>
