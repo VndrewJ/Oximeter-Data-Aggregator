@@ -2,6 +2,7 @@ from bleak import BleakScanner
 from bleak import BleakClient
 import asyncio
 
+
 DEVICE_ADDRESS = ""
 CHAR_UUID = ""
 
