@@ -18,23 +18,42 @@ function DataPage() {
   const navigate = useNavigate();
   const [data, setData] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(false); // Add error state
+  const [error, setError] = useState(false);
 
   useEffect(() => {
-    fetch('http://localhost:5000/data')
-      .then(res => {
-        if (!res.ok) throw new Error('Network response was not ok');
-        return res.json();
-      })
-      .then(json => {
-        setData(json);
-        setLoading(false);
-      })
-      .catch(() => {
-        setError(true); // Set error if fetch fails
-        setLoading(false);
-      });
+    let isMounted = true;
+
+    const fetchData = () => {
+      fetch('http://localhost:5000/data')
+        .then(res => {
+          if (!res.ok) throw new Error('Network response was not ok');
+          return res.json();
+        })
+        .then(json => {
+          if (isMounted) {
+            setData(json);
+            setLoading(false);
+            setError(false);
+          }
+        })
+        .catch(() => {
+          if (isMounted) {
+            setError(true);
+            setLoading(false);
+          }
+        });
+    };
+
+    fetchData(); // Initial fetch
+    const interval = setInterval(fetchData, 5000); // Fetch every 5 seconds
+
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
   }, []);
+
+  const recentData = [...data].reverse();
 
   return (
     <div>
@@ -53,7 +72,7 @@ function DataPage() {
             </tr>
           </thead>
           <tbody>
-            {data.map((row, idx) => (
+            {recentData.map((row, idx) => (
               <tr key={idx}>
                 {Object.values(row).map((val, i) => (
                   <td key={i}>{val}</td>
