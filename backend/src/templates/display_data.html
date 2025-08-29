@@ -1,0 +1,32 @@
+{% extends 'base.html' %}
+
+{% block title %}Data Page{% endblock %}
+
+{% block head %}
+    <h1>Oximeter Data Page</h1>
+{% endblock %}
+
+{% block content %}
+    <p>Here is the data bla bla</p>
+    {% if table_data %}
+        <table border="1" cellpadding="5">
+            <tr>
+                {% for col in table_data[0].keys() %}
+                    <th>{{ col }}</th>
+                {% endfor %}
+            </tr>
+            {% for row in table_data %}
+                <tr>
+                    {% for value in row.values() %}
+                        <td>{{ value }}</td>
+                    {% endfor %}
+                </tr>
+            {% endfor %}
+        </table>
+    {% else %}
+        <p>No data found in CSV file.</p>
+    {% endif %}
+    <br>
+    <p>Click here to go back</p>
+    <a href="{{ url_for('home_page') }}">Back To Home</a>
+{% endblock %}
