@@ -7,7 +7,7 @@ import os
 DEVICE_ADDRESS = ""
 CHAR_UUID = ""
 Write_Interval = 5  # seconds
-Write_Duration = 60  # How long the program runs for before haulting
+Write_Duration = 60  # How long the program runs for before halting
 
 # Store the latest data
 latest_data = {"hr": None, "spo2": None, "timestamp": None}
@@ -64,28 +64,27 @@ async def csv_writer():
     """Background task to write and reset buffer every interval."""
     global data_buffer
 
-    # Get absolute path to "Data" folder relative to script
+    # Get absolute path to backend/data/oximeter_test_data.csv relative to script
     base_dir = os.path.dirname(os.path.abspath(__file__))
-    filepath = os.path.join(base_dir, "Data", "health_data.csv")
+    backend_data_dir = os.path.abspath(os.path.join(base_dir, "..", "backend", "data"))
+    os.makedirs(backend_data_dir, exist_ok=True)
+    filepath = os.path.join(backend_data_dir, "health_data.csv")
 
-    # Ensure Data folder exists
-    os.makedirs(os.path.dirname(filepath), exist_ok=True)
+    # If file does not exist, write header
+    if not os.path.isfile(filepath):
+        with open(filepath, "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["timestamp", "heart_rate", "spo2"])
 
     while True:
         await asyncio.sleep(Write_Interval)
         if data_buffer:
             # Append mode so old data isn’t erased
-            file_exists = os.path.isfile(filepath)
-            with open(filepath, "w", newline="") as f:
+            with open(filepath, "a", newline="") as f:
                 writer = csv.writer(f)
-                writer.writerow(["timestamp", "heart_rate", "spo2"])
-                # Write header only once
-                # if not file_exists:
-                #     writer.writerow(["timestamp", "heart_rate", "spo2"])
                 writer.writerows(data_buffer)
-            print(f"CSV updated with {len(data_buffer)} rows.")
+            print(f"CSV appended with {len(data_buffer)} rows.")
             data_buffer = []  # clear buffer for next interval
-
 
 
 
