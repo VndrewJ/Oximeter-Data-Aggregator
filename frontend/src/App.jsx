@@ -1,6 +1,19 @@
-import { useState, useEffect } from 'react'
-import { Routes, Route, useNavigate } from 'react-router-dom'
-import './App.css'
+import { useState, useEffect } from 'react';
+import { Routes, Route, useNavigate } from 'react-router-dom';
+import io from 'socket.io-client';
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ResponsiveContainer
+} from 'recharts';
+import './App.css';
+
+const socket = io("http://localhost:5000/"); // connect to Flask-SocketIO
 
 function Home() {
   const navigate = useNavigate();
@@ -17,39 +30,38 @@ function Home() {
 function DataPage() {
   const navigate = useNavigate();
   const [data, setData] = useState([]);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
 
+  // helper: ensure consistent formatting
+  const formatBuffer = (buffer) =>
+    buffer.map((row, i) => ({
+      timestamp: Number(row["timestamp"]),
+      spo2: Number(row["spo2"]),
+      pulse: Number(row["pulse"]),
+      idx: i
+    }));
+
   useEffect(() => {
-    let isMounted = true;
+    // 1. Fetch initial buffer from REST API
+    fetch("http://localhost:5000/data")
+      .then((res) => res.json())
+      .then((json) => setData(formatBuffer(json)))
+      .catch(() => setError(true));
 
-    const fetchData = () => {
-      fetch('http://localhost:5000/data')
-        .then(res => {
-          if (!res.ok) throw new Error('Network response was not ok');
-          return res.json();
-        })
-        .then(json => {
-          if (isMounted) {
-            setData(json);
-            setLoading(false);
-            setError(false);
-          }
-        })
-        .catch(() => {
-          if (isMounted) {
-            setError(true);
-            setLoading(false);
-          }
-        });
-    };
+    // 2. Subscribe to websocket events
+    socket.on("vitals", (buffer) => {
+      setData(formatBuffer(buffer));
+      setError(false);
+    });
 
-    fetchData(); // Initial fetch
-    const interval = setInterval(fetchData, 5000); // Fetch every 5 seconds
+    socket.on("connect_error", () => {
+      setError(true);
+    });
 
+    // cleanup
     return () => {
-      isMounted = false;
-      clearInterval(interval);
+      socket.off("vitals");
+      socket.off("connect_error");
     };
   }, []);
 
@@ -58,29 +70,94 @@ function DataPage() {
   return (
     <div>
       <h2>Current Oximeter Data</h2>
-      {loading ? (
-        <p>Loading...</p>
-      ) : error ? (
-        <p style={{ color: 'red' }}>Error getting data. Please try again later.</p>
+      {error ? (
+        <p style={{ color: 'red' }}>
+          Error connecting to server. Please try again later.
+        </p>
+      ) : data.length === 0 ? (
+        <p>Waiting for data...</p>
       ) : (
-        <table style={{ margin: '0 auto' }}>
-          <thead>
-            <tr>
-              {data[0] && Object.keys(data[0]).map(key => (
-                <th key={key}>{key}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {recentData.map((row, idx) => (
-              <tr key={idx}>
-                {Object.values(row).map((val, i) => (
-                  <td key={i}>{val}</td>
-                ))}
+        <>
+          {/* Table */}
+          <table style={{ margin: '0 auto' }}>
+            <thead>
+              <tr>
+                <th>Timestamp</th>
+                <th>SpO₂ (%)</th>
+                <th>Pulse (BPM)</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {recentData.map((row, idx) => (
+                <tr key={idx}>
+                  <td>{new Date(row.timestamp * 1000).toLocaleTimeString()}</td>
+                  <td>{row.spo2}</td>
+                  <td>{row.pulse}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          {/* SpO2 Graph */}
+          <div style={{ width: "90%", height: 300, margin: "2rem auto" }}>
+            <h3>SpO₂ (%)</h3>
+            <ResponsiveContainer>
+              <LineChart data={data}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis
+                  dataKey="timestamp"
+                  tickFormatter={(t) =>
+                    new Date(t * 1000).toLocaleTimeString()
+                  }
+                  label={{ value: "Time", position: "insideBottom", offset: -5 }}
+                />
+                <YAxis domain={[85, 100]} />
+                <Tooltip
+                  labelFormatter={(t) =>
+                    new Date(t * 1000).toLocaleTimeString()
+                  }
+                />
+                <Legend />
+                <Line
+                  type="monotone"
+                  dataKey="spo2"
+                  stroke="#8884d8"
+                  name="SpO₂"
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+
+          {/* Pulse Graph */}
+          <div style={{ width: "90%", height: 300, margin: "2rem auto" }}>
+            <h3>Pulse (BPM)</h3>
+            <ResponsiveContainer>
+              <LineChart data={data}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis
+                  dataKey="timestamp"
+                  tickFormatter={(t) =>
+                    new Date(t * 1000).toLocaleTimeString()
+                  }
+                  label={{ value: "Time", position: "insideBottom", offset: -5 }}
+                />
+                <YAxis />
+                <Tooltip
+                  labelFormatter={(t) =>
+                    new Date(t * 1000).toLocaleTimeString()
+                  }
+                />
+                <Legend />
+                <Line
+                  type="monotone"
+                  dataKey="pulse"
+                  stroke="#82ca9d"
+                  name="Pulse"
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </>
       )}
       <button onClick={() => navigate('/')}>Go Back Home</button>
     </div>
@@ -96,4 +173,4 @@ function App() {
   );
 }
 
-export default App
+export default App;

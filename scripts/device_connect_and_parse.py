@@ -7,7 +7,7 @@ import os
 DEVICE_ADDRESS = ""
 CHAR_UUID = ""
 Write_Interval = 5  # seconds
-Write_Duration = 60  # How long the program runs for before halting
+# Write_Duration = 60  # How long the program runs for before halting
 
 # Store the latest data
 latest_data = {"hr": None, "spo2": None, "timestamp": None}
@@ -89,7 +89,8 @@ async def csv_writer():
 
 
 async def main():
-    global DEVICE_ADDRESS, CHAR_UUID, Write_Duration
+    global DEVICE_ADDRESS, CHAR_UUID
+    # global Write_Duration
 
     CHAR_UUID = await find_device()
     if CHAR_UUID == -1:
@@ -106,7 +107,8 @@ async def main():
         writer_task = asyncio.create_task(csv_writer())
 
         # Keep connection alive (adjust duration as needed)
-        await asyncio.sleep(Write_Duration)
+        # await asyncio.sleep(Write_Duration)
+        await asyncio.Event().wait()  # Run indefinitely
 
         await client.stop_notify(CHAR_UUID)
         writer_task.cancel()
