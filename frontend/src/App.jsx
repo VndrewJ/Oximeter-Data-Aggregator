@@ -66,6 +66,7 @@ function DataPage() {
   }, []);
 
   const recentData = [...data].reverse();
+  const tableData = recentData.slice(0, 20); // show last 20 entries in table
 
   return (
     <div>
@@ -79,7 +80,7 @@ function DataPage() {
       ) : (
         <>
           {/* Table */}
-          <table style={{ margin: '0 auto' }}>
+          <table class="vitals-table" style={{ margin: '0 auto' }}>
             <thead>
               <tr>
                 <th>Timestamp</th>
@@ -88,7 +89,7 @@ function DataPage() {
               </tr>
             </thead>
             <tbody>
-              {recentData.map((row, idx) => (
+              {tableData.map((row, idx) => (
                 <tr key={idx}>
                   <td>{new Date(row.timestamp * 1000).toLocaleTimeString()}</td>
                   <td>{row.spo2}</td>
@@ -99,7 +100,7 @@ function DataPage() {
           </table>
 
           {/* SpO2 Graph */}
-          <div style={{ width: "90%", height: 300, margin: "2rem auto" }}>
+          <div class="vitals-graph">
             <h3>SpO₂ (%)</h3>
             <ResponsiveContainer>
               <LineChart data={data}>
@@ -129,7 +130,7 @@ function DataPage() {
           </div>
 
           {/* Pulse Graph */}
-          <div style={{ width: "90%", height: 300, margin: "2rem auto" }}>
+          <div class="vitals-graph">
             <h3>Pulse (BPM)</h3>
             <ResponsiveContainer>
               <LineChart data={data}>

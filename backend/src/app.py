@@ -12,11 +12,11 @@ CORS(app)
 socketio = SocketIO(app, cors_allowed_origins="*")  # Allow React frontend
 
 # Ring buffer to store last N readings
-BUFFER_SIZE = 20
+BUFFER_SIZE = 50
 buffer = deque(maxlen=BUFFER_SIZE)
 
 # CSV file path
-csv_path = os.path.join(os.path.dirname(__file__), "..", "data", "oximeter_test_data.csv")
+csv_path = os.path.join(os.path.dirname(__file__), "..", "data", "health_data.csv")
 csv_path = os.path.abspath(csv_path)
 
 def load_initial_data():

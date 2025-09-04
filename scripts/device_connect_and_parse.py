@@ -53,7 +53,7 @@ def notification_handler(sender, data: bytearray):
             spo2 = raw[16]
             hr = raw[17]
             ts = int(time.time())
-            data_buffer.append([ts, hr, spo2])
+            data_buffer.append([ts, spo2, hr])
             print(f"Decoded -> HR={hr}, SpO₂={spo2}")
     except Exception as e:
         print("Parse error:", e)
@@ -70,11 +70,10 @@ async def csv_writer():
     os.makedirs(backend_data_dir, exist_ok=True)
     filepath = os.path.join(backend_data_dir, "health_data.csv")
 
-    # If file does not exist, write header
-    if not os.path.isfile(filepath):
-        with open(filepath, "w", newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow(["timestamp", "heart_rate", "spo2"])
+    # Clear file and write headers
+    with open(filepath, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["timestamp", "spo2", "pulse"])
 
     while True:
         await asyncio.sleep(Write_Interval)
