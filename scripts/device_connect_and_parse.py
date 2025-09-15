@@ -1,19 +1,36 @@
 from bleak import BleakScanner, BleakClient
+import sqlite3
 import asyncio
-import csv
 import time
 import os
+import uuid
 
 DEVICE_ADDRESS = ""
 CHAR_UUID = ""
 Write_Interval = 5  # seconds
-# Write_Duration = 60  # How long the program runs for before halting
 
 # Store the latest data
 latest_data = {"hr": None, "spo2": None, "timestamp": None}
-
-# Buffer for current interval
 data_buffer = []
+db_connection = None
+current_session_id = None
+session_key = None
+
+
+async def create_session():
+    """Create a new session with a unique key."""
+    global current_session_id, session_key, db_connection
+
+    session_key = str(uuid.uuid4())[:6].upper()
+    cursor = db_connection.cursor()
+    cursor.execute(
+        "INSERT INTO session (session_key, start_time) VALUES (?, ?)",
+        (session_key, int(time.time())),
+    )
+    db_connection.commit()
+    current_session_id = cursor.lastrowid
+    return session_key
+
 
 async def find_device():
     global DEVICE_ADDRESS, CHAR_UUID
@@ -41,10 +58,9 @@ async def find_device():
 
 def notification_handler(sender, data: bytearray):
     """Parse HR and SpO₂ from raw data frame."""
-    global latest_data
+    global latest_data, data_buffer, current_session_id
     raw = list(data)
 
-    # Need at least 19 bytes if we are going to look at index 18
     if len(raw) < 19:
         return
 
@@ -53,44 +69,53 @@ def notification_handler(sender, data: bytearray):
             spo2 = raw[16]
             hr = raw[17]
             ts = int(time.time())
-            data_buffer.append([ts, spo2, hr])
-            print(f"Decoded -> HR={hr}, SpO₂={spo2}")
+            data_buffer.append((current_session_id, ts, spo2, hr))
+            print(f"Session {session_key} -> HR={hr}, SpO₂={spo2}")
     except Exception as e:
         print("Parse error:", e)
 
 
-
-async def csv_writer():
-    """Background task to write and reset buffer every interval."""
-    global data_buffer
-
-    # Get absolute path to backend/data/oximeter_test_data.csv relative to script
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    backend_data_dir = os.path.abspath(os.path.join(base_dir, "..", "backend", "data"))
-    os.makedirs(backend_data_dir, exist_ok=True)
-    filepath = os.path.join(backend_data_dir, "health_data.csv")
-
-    # Clear file and write headers
-    with open(filepath, "w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow(["timestamp", "spo2", "pulse"])
+async def db_writer():
+    """Background task to write buffer to SQLite every interval."""
+    global data_buffer, db_connection
 
     while True:
         await asyncio.sleep(Write_Interval)
         if data_buffer:
-            # Append mode so old data isn’t erased
-            with open(filepath, "a", newline="") as f:
-                writer = csv.writer(f)
-                writer.writerows(data_buffer)
-            print(f"CSV appended with {len(data_buffer)} rows.")
-            data_buffer = []  # clear buffer for next interval
-
+            try:
+                cursor = db_connection.cursor()
+                cursor.executemany(
+                    "INSERT INTO health_data (session_id, timestamp, spo2, pulse) VALUES (?, ?, ?, ?)",
+                    data_buffer,
+                )
+                db_connection.commit()
+                print(f"DB appended with {len(data_buffer)} rows for session {session_key}")
+                data_buffer = []  # clear buffer
+            except Exception as e:
+                print("DB write error:", e)
 
 
 async def main():
-    global DEVICE_ADDRESS, CHAR_UUID
-    # global Write_Duration
+    global DEVICE_ADDRESS, CHAR_UUID, db_connection, current_session_id
 
+    # Get paths
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.abspath(os.path.join(base_dir, ".."))
+    data_dir = os.path.join(project_root, "data")
+    os.makedirs(data_dir, exist_ok=True)
+    db_path = os.path.join(data_dir, "database.db")
+    schema_path = os.path.join(base_dir, "schema.sql")
+
+    # Initialize database
+    db_connection = sqlite3.connect(db_path)
+    with open(schema_path) as f:
+        db_connection.executescript(f.read())
+
+    # Create new session
+    session_key = await create_session()
+    print(f"Created new session: {session_key}")
+
+    # Find device
     CHAR_UUID = await find_device()
     if CHAR_UUID == -1:
         print("Device not found.")
@@ -99,19 +124,22 @@ async def main():
     print(f"Using characteristic: {CHAR_UUID}")
 
     async with BleakClient(DEVICE_ADDRESS) as client:
-        print("Connected. Subscribing to notifications...")
+        print(f"Connected. Starting session {session_key}")
         await client.start_notify(CHAR_UUID, notification_handler)
 
-        # Run CSV writer in parallel
-        writer_task = asyncio.create_task(csv_writer())
+        # Run DB writer in parallel
+        writer_task = asyncio.create_task(db_writer())
 
-        # Keep connection alive (adjust duration as needed)
-        # await asyncio.sleep(Write_Duration)
-        await asyncio.Event().wait()  # Run indefinitely
+        try:
+            # Run indefinitely until interrupted
+            await asyncio.Event().wait()
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            print(f"Stopping session {session_key}...")
 
         await client.stop_notify(CHAR_UUID)
         writer_task.cancel()
-        print("Stopped.")
+        print(f"Session {session_key} stopped.")
 
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())

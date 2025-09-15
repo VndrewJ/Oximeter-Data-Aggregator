@@ -1,5 +1,8 @@
 .venv/
 
+# Data files
+data/
+
 # Backend
 backend/data/
 backend/src/__pycache__/
