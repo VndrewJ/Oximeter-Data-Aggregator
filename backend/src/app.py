@@ -1,72 +1,125 @@
-from flask import Flask, jsonify
+from flask import Flask, jsonify, abort
 from flask_cors import CORS
-from collections import deque
-import csv
+from flask_socketio import SocketIO, emit
+import sqlite3
 import os
 import time
 import threading
-from flask_socketio import SocketIO, emit
 
 app = Flask(__name__)
 CORS(app)
-socketio = SocketIO(app, cors_allowed_origins="*")  # Allow React frontend
+socketio = SocketIO(app, cors_allowed_origins="*")
 
-# Ring buffer to store last N readings
-BUFFER_SIZE = 50
-buffer = deque(maxlen=BUFFER_SIZE)
+# Number of readings to return
+LIMIT_READINGS = 50
 
-# CSV file path
-csv_path = os.path.join(os.path.dirname(__file__), "..", "data", "health_data.csv")
-csv_path = os.path.abspath(csv_path)
+# Database path
+db_path = os.path.join(os.path.dirname(__file__), "..", "..", "data", "database.db")
+db_path = os.path.abspath(db_path)
 
-def load_initial_data():
-    """Load existing CSV data into the buffer."""
+# Set tracking all active sessions
+active_sessions = set()
+# Track last timestamp per session instead of globally
+session_timestamps = {}
+
+def get_db():
+    """Get database connection with row factory."""
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+def get_session_data(session_key):
+    """Get the most recent readings for a session."""
     try:
-        with open(csv_path, newline="") as csvfile:
-            reader = csv.DictReader(csvfile)
-            for row in reader:
-                buffer.append(row)
-    except FileNotFoundError:
-        print(f"CSV file not found at {csv_path}")
+        with get_db() as conn:
+            cursor = conn.cursor()
+            # First get session ID
+            cursor.execute("SELECT id FROM session WHERE session_key = ?", (session_key,))
+            session = cursor.fetchone()
+            
+            if not session:
+                return None
+                
+            # Get latest health data for session
+            cursor.execute("""
+                SELECT timestamp, spo2, pulse 
+                FROM health_data 
+                WHERE session_id = ? 
+                ORDER BY timestamp DESC 
+                LIMIT ?""", (session['id'], LIMIT_READINGS))
+            
+            return [dict(row) for row in cursor.fetchall()]
+    except sqlite3.Error as e:
+        print(f"Database error: {e}")
+        return None
 
-load_initial_data()
-
-@app.route("/data")
-def get_data():
-    """Return the most recent readings as JSON."""
-    return jsonify(list(buffer))
+@app.route("/data/<session_key>")
+def get_data(session_key):
+    """Return the most recent readings for a session as JSON."""
+    data = get_session_data(session_key)
+    if data is None:
+        abort(404, description="Session not found")
+    return jsonify(data)
 
 @app.route("/")
 def health_check():
     """Simple health check endpoint."""
-    return jsonify({"status": "Flask backend running", "buffer_size": len(buffer)})
+    return jsonify({"status": "Flask backend running"})
 
 # --- SocketIO events ---
-@socketio.on("connect")
-def handle_connect():
-    print("Client connected")
-    emit("vitals", list(buffer))  # send current buffer on connect
+@socketio.on("join")
+def handle_join(data):
+    """Handle client joining a specific session."""
+    session_key = data.get('session')
+    data = get_session_data(session_key)
+    if data:
+        active_sessions.add(session_key)
+        # Initialize timestamp for this session
+        session_timestamps[session_key] = 0
+        print(f"Client joined session: {session_key}")
+        emit(f"vitals_{session_key}", data)
+    else:
+        emit("error", {"message": "Session not found"})
 
-def watch_csv():
+@socketio.on("leave")
+def handle_leave(data):
+    session_key = data.get('session')
+    active_sessions.discard(session_key)
+    # Clean up timestamp when session ends
+    session_timestamps.pop(session_key, None)
+    print(f"Client left session: {session_key}")
+
+def watch_db():
     """
-    Continuously watches the CSV file for new lines and pushes updates to clients.
-    """
-    last_index = len(buffer)  # start after existing lines
+    Continuously watches the database for new readings and pushes updates to clients.
+    """    
     while True:
         try:
-            with open(csv_path, newline="") as csvfile:
-                reader = list(csv.DictReader(csvfile))
-                # Push only new rows
-                for row in reader[last_index:]:
-                    buffer.append(row)
-                    socketio.emit("vitals", list(buffer))
-                last_index = len(reader)
-        except FileNotFoundError:
-            print(f"CSV file not found at {csv_path}")
-        time.sleep(1)  # check for new data every second
+            # Only query if there are active sessions
+            if active_sessions:
+                with get_db() as conn:
+                    cursor = conn.cursor()
+                    
+                    # Check each active session
+                    for session_key in active_sessions.copy():
+                        data = get_session_data(session_key)
+                        if data:
+                            last_ts = session_timestamps.get(session_key, 0)
+                            if data[0]['timestamp'] > last_ts:
+                                session_timestamps[session_key] = data[0]['timestamp']
+                                socketio.emit(f"vitals_{session_key}", data)
+                        else:
+                            # Remove inactive/invalid sessions
+                            active_sessions.discard(session_key)
+                            session_timestamps.pop(session_key, None)
+                
+        except sqlite3.Error as e:
+            print(f"Database error: {e}")
+        
+        time.sleep(1)  # Check for new data every second
 
-# Start the CSV watching thread
-threading.Thread(target=watch_csv, daemon=True).start()
+# Start the database watching thread
+threading.Thread(target=watch_db, daemon=True).start()
 
 if __name__ == "__main__":
-    socketio.run(app, host="0.0.0.0", port=5000, debug=True)
+    socketio.run(app, debug=True)

@@ -17,12 +17,56 @@ const socket = io("http://localhost:5000/"); // connect to Flask-SocketIO
 
 function Home() {
   const navigate = useNavigate();
+  const [sessionKey, setSessionKey] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!sessionKey.trim()) return;
+
+    setLoading(true);
+    setError('');
+
+    try {
+      const response = await fetch(`http://localhost:5000/data/${sessionKey}`);
+      if (!response.ok) {
+        throw new Error('Invalid session key');
+      }
+      navigate(`/data/${sessionKey}`);
+    } catch (err) {
+      setError('Invalid session key. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <div className="home-container">
       <h1>Welcome to the IoT Oximeter Project</h1>
-      <p>This is the home page of your application.</p>
-      <button onClick={() => navigate('/data')}>Go To Data</button>
+      <p>Enter your session key to view data:</p>
+      <form onSubmit={handleSubmit}>
+        <input
+          type="text"
+          value={sessionKey}
+          onChange={(e) => {
+            setSessionKey(e.target.value.toUpperCase());
+            setError(''); // Clear error when input changes
+          }}
+          placeholder="Enter session key"
+          maxLength={6}
+          style={{ marginRight: '10px' }}
+          disabled={loading}
+        />
+        <button type="submit" disabled={loading}>
+          {loading ? 'Checking...' : 'View Data'}
+        </button>
+      </form>
+      {error && (
+        <p style={{ color: 'red', marginTop: '10px' }}>
+          {error}
+        </p>
+      )}
     </div>
   );
 }
@@ -31,6 +75,7 @@ function DataPage() {
   const navigate = useNavigate();
   const [data, setData] = useState([]);
   const [error, setError] = useState(false);
+  const sessionKey = window.location.pathname.split('/')[2]; // Get session key from URL
 
   // helper: ensure consistent formatting
   const formatBuffer = (buffer) =>
@@ -42,14 +87,24 @@ function DataPage() {
     }));
 
   useEffect(() => {
-    // 1. Fetch initial buffer from REST API
-    fetch("http://localhost:5000/data")
-      .then((res) => res.json())
+    if (!sessionKey) {
+      navigate('/');
+      return;
+    }
+
+    // 1. Fetch initial buffer from REST API with session key
+    fetch(`http://localhost:5000/data/${sessionKey}`)
+      .then((res) => {
+        if (!res.ok) throw new Error('Session not found');
+        return res.json();
+      })
       .then((json) => setData(formatBuffer(json)))
       .catch(() => setError(true));
 
-    // 2. Subscribe to websocket events
-    socket.on("vitals", (buffer) => {
+    // 2. Subscribe to websocket events for this session
+    socket.emit('join', { session: sessionKey });
+    
+    socket.on(`vitals_${sessionKey}`, (buffer) => {
       setData(formatBuffer(buffer));
       setError(false);
     });
@@ -60,17 +115,18 @@ function DataPage() {
 
     // cleanup
     return () => {
-      socket.off("vitals");
+      socket.emit('leave', { session: sessionKey });
+      socket.off(`vitals_${sessionKey}`);
       socket.off("connect_error");
     };
-  }, []);
+  }, [sessionKey, navigate]);
 
   const recentData = [...data].reverse();
   const tableData = recentData.slice(0, 20); // show last 20 entries in table
 
   return (
     <div>
-      <h2>Current Oximeter Data</h2>
+      <h2>Session: {sessionKey}</h2>
       {error ? (
         <p style={{ color: 'red' }}>
           Error connecting to server. Please try again later.
@@ -169,7 +225,7 @@ function App() {
   return (
     <Routes>
       <Route path="/" element={<Home />} />
-      <Route path="/data" element={<DataPage />} />
+      <Route path="/data/:sessionKey" element={<DataPage />} />
     </Routes>
   );
 }
