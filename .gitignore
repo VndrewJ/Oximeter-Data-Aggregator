@@ -9,8 +9,11 @@ backend/src/__pycache__/
 backend/src/*.pyc
 backend/.pytest_cache/
 backend/.vscode/*
+backend/.env
 
 # Frontend
+frontend/.env
+
 ## Logs
 frontend/logs
 frontend/*.log
@@ -37,5 +40,6 @@ frontend/*.local
 *.sw?
 
 #Scripts
-
+Scripts/*.sql
+Scripts/.env
 
