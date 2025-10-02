@@ -9,8 +9,11 @@ backend/src/__pycache__/
 backend/src/*.pyc
 backend/.pytest_cache/
 backend/.vscode/*
+backend/.env
 
 # Frontend
+
+
 ## Logs
 frontend/logs
 frontend/*.log
@@ -19,6 +22,7 @@ frontend/yarn-debug.log*
 frontend/yarn-error.log*
 frontend/pnpm-debug.log*
 frontend/lerna-debug.log*
+frontend/.env
 
 frontend/node_modules
 frontend/dist
@@ -37,5 +41,7 @@ frontend/*.local
 *.sw?
 
 #Scripts
+scripts/*.sql
+scripts/.env
 
 

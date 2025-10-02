@@ -1,9 +1,20 @@
 from bleak import BleakScanner, BleakClient
-import sqlite3
+from supabase import create_client
+from dotenv import load_dotenv
 import asyncio
 import time
 import os
 import uuid
+from datetime import datetime, timezone
+
+env_path = os.path.join(os.path.dirname(__file__), ".env")
+load_dotenv(env_path)
+
+# Initialize Supabase
+supabase = create_client(
+    os.getenv('SUPABASE_URL'),
+    os.getenv('SUPABASE_KEY')
+)
 
 DEVICE_ADDRESS = ""
 CHAR_UUID = ""
@@ -12,23 +23,26 @@ Write_Interval = 5  # seconds
 # Store the latest data
 latest_data = {"hr": None, "spo2": None, "timestamp": None}
 data_buffer = []
-db_connection = None
 current_session_id = None
 session_key = None
 
 
 async def create_session():
     """Create a new session with a unique key."""
-    global current_session_id, session_key, db_connection
+    global current_session_id, session_key
 
     session_key = str(uuid.uuid4())[:6].upper()
-    cursor = db_connection.cursor()
-    cursor.execute(
-        "INSERT INTO session (session_key, start_time) VALUES (?, ?)",
-        (session_key, int(time.time())),
-    )
-    db_connection.commit()
-    current_session_id = cursor.lastrowid
+
+    # Format current time as ISO 8601 timestamp
+    current_time = datetime.now(timezone.utc).isoformat()
+
+    # Create session in Supabase
+    result = supabase.table('sessions').insert({
+        'session_key': session_key,
+        'start_time': current_time  # Changed from time.time()
+    }).execute()
+
+    current_session_id = result.data[0]['id']
     return session_key
 
 
@@ -69,26 +83,27 @@ def notification_handler(sender, data: bytearray):
             spo2 = raw[16]
             hr = raw[17]
             ts = int(time.time())
-            data_buffer.append((current_session_id, ts, spo2, hr))
+            data_buffer.append({
+                'session_id': current_session_id,
+                'timestamp': ts,
+                'spo2': spo2,
+                'pulse': hr
+            })
             print(f"Session {session_key} -> HR={hr}, SpO₂={spo2}")
     except Exception as e:
         print("Parse error:", e)
 
 
 async def db_writer():
-    """Background task to write buffer to SQLite every interval."""
-    global data_buffer, db_connection
+    """Background task to write buffer to Supabase every interval."""
+    global data_buffer
 
     while True:
         await asyncio.sleep(Write_Interval)
         if data_buffer:
             try:
-                cursor = db_connection.cursor()
-                cursor.executemany(
-                    "INSERT INTO health_data (session_id, timestamp, spo2, pulse) VALUES (?, ?, ?, ?)",
-                    data_buffer,
-                )
-                db_connection.commit()
+                # Insert batch of readings
+                result = supabase.table('health_data').insert(data_buffer).execute()
                 print(f"DB appended with {len(data_buffer)} rows for session {session_key}")
                 data_buffer = []  # clear buffer
             except Exception as e:
@@ -96,20 +111,7 @@ async def db_writer():
 
 
 async def main():
-    global DEVICE_ADDRESS, CHAR_UUID, db_connection, current_session_id
-
-    # Get paths
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    project_root = os.path.abspath(os.path.join(base_dir, ".."))
-    data_dir = os.path.join(project_root, "data")
-    os.makedirs(data_dir, exist_ok=True)
-    db_path = os.path.join(data_dir, "database.db")
-    schema_path = os.path.join(base_dir, "schema.sql")
-
-    # Initialize database
-    db_connection = sqlite3.connect(db_path)
-    with open(schema_path) as f:
-        db_connection.executescript(f.read())
+    global DEVICE_ADDRESS, CHAR_UUID, current_session_id
 
     # Create new session
     session_key = await create_session()

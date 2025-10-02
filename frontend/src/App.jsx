@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Routes, Route, useNavigate } from 'react-router-dom';
-import io from 'socket.io-client';
+import { createClient } from '@supabase/supabase-js';
 import {
   LineChart,
   Line,
@@ -13,7 +13,11 @@ import {
 } from 'recharts';
 import './App.css';
 
-const socket = io("http://localhost:5000/"); // connect to Flask-SocketIO
+// Create Supabase client for real-time updates only
+const supabase = createClient(
+  import.meta.env.VITE_SUPABASE_URL,
+  import.meta.env.VITE_SUPABASE_ANON_KEY
+);
 
 function Home() {
   const navigate = useNavigate();
@@ -92,37 +96,51 @@ function DataPage() {
       return;
     }
 
-    // 1. Fetch initial buffer from REST API with session key
-    fetch(`http://localhost:5000/data/${sessionKey}`)
-      .then((res) => {
-        if (!res.ok) throw new Error('Session not found');
-        return res.json();
-      })
-      .then((json) => setData(formatBuffer(json)))
-      .catch(() => setError(true));
+    // Get data through backend API
+    const fetchData = async () => {
+      try {
+        const response = await fetch(`http://localhost:5000/data/${sessionKey}`);
+        if (!response.ok) throw new Error('Session not found');
+        const json = await response.json();
+        setData(formatBuffer(json));
+        setError(false);
+      } catch (err) {
+        setError(true);
+      }
+    };
 
-    // 2. Subscribe to websocket events for this session
-    socket.emit('join', { session: sessionKey });
-    
-    socket.on(`vitals_${sessionKey}`, (buffer) => {
-      setData(formatBuffer(buffer));
-      setError(false);
-    });
+    // Initial fetch
+    fetchData();
 
-    socket.on("connect_error", () => {
-      setError(true);
-    });
+    // Subscribe to real-time updates via Supabase real-time
+    const subscription = supabase
+      .channel('health_data_changes')
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'health_data'
+        },
+        // Fetch fresh data through API when new records arrive
+        () => fetchData()
+      )
+      .subscribe();
 
-    // cleanup
     return () => {
-      socket.emit('leave', { session: sessionKey });
-      socket.off(`vitals_${sessionKey}`);
-      socket.off("connect_error");
+      subscription.unsubscribe();
     };
   }, [sessionKey, navigate]);
 
-  const recentData = [...data].reverse();
-  const tableData = recentData.slice(0, 20); // show last 20 entries in table
+  // Sort once: oldest → newest
+  const ascending = [...data].sort((a, b) => a.timestamp - b.timestamp);
+
+  // Graph wants oldest → newest (natural order)
+  const graphData = ascending;
+
+  // Table wants newest → oldest (but only last 20)
+  const tableData = ascending.slice(-20).reverse();
+
 
   return (
     <div>
@@ -135,7 +153,7 @@ function DataPage() {
         <p>Waiting for data...</p>
       ) : (
         <>
-          {/* Table */}
+          {/* Table - uses sortedData (newest first) */}
           <table class="vitals-table" style={{ margin: '0 auto' }}>
             <thead>
               <tr>
@@ -155,11 +173,11 @@ function DataPage() {
             </tbody>
           </table>
 
-          {/* SpO2 Graph */}
+          {/* SpO2 Graph - uses graphData (oldest first) */}
           <div class="vitals-graph">
             <h3>SpO₂ (%)</h3>
             <ResponsiveContainer>
-              <LineChart data={data}>
+              <LineChart data={graphData}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis
                   dataKey="timestamp"
@@ -185,11 +203,11 @@ function DataPage() {
             </ResponsiveContainer>
           </div>
 
-          {/* Pulse Graph */}
+          {/* Pulse Graph - uses graphData (oldest first) */}
           <div class="vitals-graph">
             <h3>Pulse (BPM)</h3>
             <ResponsiveContainer>
-              <LineChart data={data}>
+              <LineChart data={graphData}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis
                   dataKey="timestamp"
