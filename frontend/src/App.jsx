@@ -16,8 +16,24 @@ import './App.css';
 // Create Supabase client for real-time updates only
 const supabase = createClient(
   import.meta.env.VITE_SUPABASE_URL,
-  import.meta.env.VITE_SUPABASE_ANON_KEY
+  import.meta.env.VITE_SUPABASE_ANON_KEY,
+  {
+    realtime: {
+      params: {
+        eventsPerSecond: 10
+      }
+    },
+    db: {
+      schema: 'public'
+    },
+    auth: {
+      persistSession: false
+    }
+  }
 );
+
+// Get API URL from environment variable
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
 function Home() {
   const navigate = useNavigate();
@@ -33,7 +49,7 @@ function Home() {
     setError('');
 
     try {
-      const response = await fetch(`http://localhost:5000/data/${sessionKey}`);
+      const response = await fetch(`${API_URL}/data/${sessionKey}`);
       if (!response.ok) {
         throw new Error('Invalid session key');
       }
@@ -163,7 +179,7 @@ function DataPage() {
     // Get data through backend API
     const fetchData = async () => {
       try {
-        const response = await fetch(`http://localhost:5000/data/${sessionKey}`);
+        const response = await fetch(`${API_URL}/data/${sessionKey}`);
         if (!response.ok) throw new Error('Session not found');
         const json = await response.json();
         setData(formatBuffer(json));

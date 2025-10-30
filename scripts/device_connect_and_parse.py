@@ -8,6 +8,7 @@ import uuid
 from datetime import datetime, timezone
 import requests
 
+# Load environment variables
 env_path = os.path.join(os.path.dirname(__file__), ".env")
 load_dotenv(env_path)
 
@@ -16,6 +17,11 @@ supabase = create_client(
     os.getenv('SUPABASE_URL'),
     os.getenv('SUPABASE_KEY')
 )
+
+# Get API URL from environment variables
+API_URL = os.getenv('API_URL')
+if not API_URL:
+    raise ValueError("API_URL not found in environment variables")
 
 DEVICE_ADDRESS = ""
 CHAR_UUID = ""
@@ -31,14 +37,14 @@ session_key = None
 async def request_session():
     """Request a new session key from the server."""
     try:
-        response = requests.post('http://localhost:5000/session/new')
+        response = requests.post(f'{API_URL}/session/new')
         if response.ok:
             data = response.json()
             session_key = data['session_key']
             print(f"Created new session: {session_key}")
             return session_key
         else:
-            raise Exception("Failed to create session")
+            raise Exception(f"Failed to create session: {response.status_code}")
     except Exception as e:
         print(f"Error creating session: {e}")
         return None
