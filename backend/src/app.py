@@ -65,6 +65,16 @@ def get_data(session_key):
         print(f"Error: {e}")
         abort(500)
 
+@app.route("/")
+def home():
+    return jsonify({
+        "status": "online",
+        "endpoints": {
+            "create_session": "/session/new",
+            "get_data": "/data/<session_key>"
+        }
+    })
+
 if __name__ == "__main__":
     # Get port from Railway environment
     port = int(os.environ.get('PORT', 8080))
