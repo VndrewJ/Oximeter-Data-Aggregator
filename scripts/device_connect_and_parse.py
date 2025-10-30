@@ -6,6 +6,7 @@ import time
 import os
 import uuid
 from datetime import datetime, timezone
+import requests
 
 env_path = os.path.join(os.path.dirname(__file__), ".env")
 load_dotenv(env_path)
@@ -27,23 +28,20 @@ current_session_id = None
 session_key = None
 
 
-async def create_session():
-    """Create a new session with a unique key."""
-    global current_session_id, session_key
-
-    session_key = str(uuid.uuid4())[:6].upper()
-
-    # Format current time as ISO 8601 timestamp
-    current_time = datetime.now(timezone.utc).isoformat()
-
-    # Create session in Supabase
-    result = supabase.table('sessions').insert({
-        'session_key': session_key,
-        'start_time': current_time  # Changed from time.time()
-    }).execute()
-
-    current_session_id = result.data[0]['id']
-    return session_key
+async def request_session():
+    """Request a new session key from the server."""
+    try:
+        response = requests.post('http://localhost:5000/session/new')
+        if response.ok:
+            data = response.json()
+            session_key = data['session_key']
+            print(f"Created new session: {session_key}")
+            return session_key
+        else:
+            raise Exception("Failed to create session")
+    except Exception as e:
+        print(f"Error creating session: {e}")
+        return None
 
 
 async def find_device():
@@ -111,11 +109,16 @@ async def db_writer():
 
 
 async def main():
-    global DEVICE_ADDRESS, CHAR_UUID, current_session_id
+    # Get session key from server first
+    session_key = await request_session()
+    if not session_key:
+        print("Could not create session. Exiting.")
+        return
 
-    # Create new session
-    session_key = await create_session()
-    print(f"Created new session: {session_key}")
+    print(f"Starting data collection with session key: {session_key}")
+    print("Share this session key with the person viewing the data.")
+
+    global DEVICE_ADDRESS, CHAR_UUID, current_session_id
 
     # Find device
     CHAR_UUID = await find_device()
