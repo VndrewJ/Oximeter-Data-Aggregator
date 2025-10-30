@@ -1,3 +1,7 @@
 .venv/
 backend/data/
-scripts/data/
+backend/*.env
+frontend/*.env
+scripts/*.sql
+scripts/*.env
+
