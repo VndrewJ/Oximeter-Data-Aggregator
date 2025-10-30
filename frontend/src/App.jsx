@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, memo } from 'react';
 import { Routes, Route, useNavigate } from 'react-router-dom';
 import { createClient } from '@supabase/supabase-js';
 import {
@@ -75,6 +75,70 @@ function Home() {
   );
 }
 
+const SpO2Graph = memo(({ data }) => (
+  <div className="vitals-graph">
+    <h3>SpO₂ (%)</h3>
+    <ResponsiveContainer>
+      <LineChart data={data}>
+        <CartesianGrid strokeDasharray="3 3" />
+        <XAxis
+          dataKey="timestamp"
+          tickFormatter={(t) =>
+            new Date(t * 1000).toLocaleTimeString()
+          }
+          label={{ value: "Time", position: "insideBottom", offset: -5 }}
+        />
+        <YAxis domain={[85, 100]} />
+        <Tooltip
+          labelFormatter={(t) =>
+            new Date(t * 1000).toLocaleTimeString()
+          }
+        />
+        <Legend />
+        <Line
+          type="monotone"
+          dataKey="spo2"
+          stroke="#8884d8"
+          name="SpO₂"
+          isAnimationActive={false}
+        />
+      </LineChart>
+    </ResponsiveContainer>
+  </div>
+));
+
+const PulseGraph = memo(({ data }) => (
+  <div className="vitals-graph">
+    <h3>Pulse (BPM)</h3>
+    <ResponsiveContainer>
+      <LineChart data={data}>
+        <CartesianGrid strokeDasharray="3 3" />
+        <XAxis
+          dataKey="timestamp"
+          tickFormatter={(t) =>
+            new Date(t * 1000).toLocaleTimeString()
+          }
+          label={{ value: "Time", position: "insideBottom", offset: -5 }}
+        />
+        <YAxis />
+        <Tooltip
+          labelFormatter={(t) =>
+            new Date(t * 1000).toLocaleTimeString()
+          }
+        />
+        <Legend />
+        <Line
+          type="monotone"
+          dataKey="pulse"
+          stroke="#82ca9d"
+          name="Pulse"
+          isAnimationActive={false}
+        />
+      </LineChart>
+    </ResponsiveContainer>
+  </div>
+));
+
 function DataPage() {
   const navigate = useNavigate();
   const [data, setData] = useState([]);
@@ -120,10 +184,22 @@ function DataPage() {
         {
           event: 'INSERT',
           schema: 'public',
-          table: 'health_data'
+          table: 'health_data',
         },
-        // Fetch fresh data through API when new records arrive
-        () => fetchData()
+        // Only fetch new data
+        (payload) => {
+          setData((prev) => {
+            const newRow = payload.new;
+            return [
+              ...prev.slice(-99), // keep last 100 points
+              {
+                timestamp: Number(newRow.timestamp),
+                spo2: Number(newRow.spo2),
+                pulse: Number(newRow.pulse),
+              },
+            ];
+          });
+        }
       )
       .subscribe();
 
@@ -173,65 +249,8 @@ function DataPage() {
             </tbody>
           </table>
 
-          {/* SpO2 Graph - uses graphData (oldest first) */}
-          <div class="vitals-graph">
-            <h3>SpO₂ (%)</h3>
-            <ResponsiveContainer>
-              <LineChart data={graphData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis
-                  dataKey="timestamp"
-                  tickFormatter={(t) =>
-                    new Date(t * 1000).toLocaleTimeString()
-                  }
-                  label={{ value: "Time", position: "insideBottom", offset: -5 }}
-                />
-                <YAxis domain={[85, 100]} />
-                <Tooltip
-                  labelFormatter={(t) =>
-                    new Date(t * 1000).toLocaleTimeString()
-                  }
-                />
-                <Legend />
-                <Line
-                  type="monotone"
-                  dataKey="spo2"
-                  stroke="#8884d8"
-                  name="SpO₂"
-                />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-
-          {/* Pulse Graph - uses graphData (oldest first) */}
-          <div class="vitals-graph">
-            <h3>Pulse (BPM)</h3>
-            <ResponsiveContainer>
-              <LineChart data={graphData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis
-                  dataKey="timestamp"
-                  tickFormatter={(t) =>
-                    new Date(t * 1000).toLocaleTimeString()
-                  }
-                  label={{ value: "Time", position: "insideBottom", offset: -5 }}
-                />
-                <YAxis />
-                <Tooltip
-                  labelFormatter={(t) =>
-                    new Date(t * 1000).toLocaleTimeString()
-                  }
-                />
-                <Legend />
-                <Line
-                  type="monotone"
-                  dataKey="pulse"
-                  stroke="#82ca9d"
-                  name="Pulse"
-                />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
+          <SpO2Graph data={graphData} />
+          <PulseGraph data={graphData} />
         </>
       )}
       <button onClick={() => navigate('/')}>Go Back Home</button>
