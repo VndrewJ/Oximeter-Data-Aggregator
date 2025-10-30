@@ -5,6 +5,16 @@
   text-align: center;
 }
 
+.vitals-table {
+  width: 100%;
+}
+
+.vitals-graph{
+  width: 1000px;
+  height: 300px;
+  margin-bottom: 60px;
+}
+
 .logo {
   height: 6em;
   padding: 1.5em;

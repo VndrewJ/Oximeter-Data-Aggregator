@@ -1,19 +1,48 @@
 from bleak import BleakScanner, BleakClient
+from supabase import create_client
+from dotenv import load_dotenv
 import asyncio
-import csv
 import time
 import os
+import uuid
+from datetime import datetime, timezone
+import requests
+
+env_path = os.path.join(os.path.dirname(__file__), ".env")
+load_dotenv(env_path)
+
+# Initialize Supabase
+supabase = create_client(
+    os.getenv('SUPABASE_URL'),
+    os.getenv('SUPABASE_KEY')
+)
 
 DEVICE_ADDRESS = ""
 CHAR_UUID = ""
 Write_Interval = 5  # seconds
-Write_Duration = 60  # How long the program runs for before halting
 
 # Store the latest data
 latest_data = {"hr": None, "spo2": None, "timestamp": None}
-
-# Buffer for current interval
 data_buffer = []
+current_session_id = None
+session_key = None
+
+
+async def request_session():
+    """Request a new session key from the server."""
+    try:
+        response = requests.post('http://localhost:5000/session/new')
+        if response.ok:
+            data = response.json()
+            session_key = data['session_key']
+            print(f"Created new session: {session_key}")
+            return session_key
+        else:
+            raise Exception("Failed to create session")
+    except Exception as e:
+        print(f"Error creating session: {e}")
+        return None
+
 
 async def find_device():
     global DEVICE_ADDRESS, CHAR_UUID
@@ -41,10 +70,9 @@ async def find_device():
 
 def notification_handler(sender, data: bytearray):
     """Parse HR and SpO₂ from raw data frame."""
-    global latest_data
+    global latest_data, data_buffer, current_session_id
     raw = list(data)
 
-    # Need at least 19 bytes if we are going to look at index 18
     if len(raw) < 19:
         return
 
@@ -53,44 +81,46 @@ def notification_handler(sender, data: bytearray):
             spo2 = raw[16]
             hr = raw[17]
             ts = int(time.time())
-            data_buffer.append([ts, hr, spo2])
-            print(f"Decoded -> HR={hr}, SpO₂={spo2}")
+            data_buffer.append({
+                'session_id': current_session_id,
+                'timestamp': ts,
+                'spo2': spo2,
+                'pulse': hr
+            })
+            print(f"Session {session_key} -> HR={hr}, SpO₂={spo2}")
     except Exception as e:
         print("Parse error:", e)
 
 
-
-async def csv_writer():
-    """Background task to write and reset buffer every interval."""
+async def db_writer():
+    """Background task to write buffer to Supabase every interval."""
     global data_buffer
-
-    # Get absolute path to backend/data/oximeter_test_data.csv relative to script
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    backend_data_dir = os.path.abspath(os.path.join(base_dir, "..", "backend", "data"))
-    os.makedirs(backend_data_dir, exist_ok=True)
-    filepath = os.path.join(backend_data_dir, "health_data.csv")
-
-    # If file does not exist, write header
-    if not os.path.isfile(filepath):
-        with open(filepath, "w", newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow(["timestamp", "heart_rate", "spo2"])
 
     while True:
         await asyncio.sleep(Write_Interval)
         if data_buffer:
-            # Append mode so old data isn’t erased
-            with open(filepath, "a", newline="") as f:
-                writer = csv.writer(f)
-                writer.writerows(data_buffer)
-            print(f"CSV appended with {len(data_buffer)} rows.")
-            data_buffer = []  # clear buffer for next interval
-
+            try:
+                # Insert batch of readings
+                result = supabase.table('health_data').insert(data_buffer).execute()
+                print(f"DB appended with {len(data_buffer)} rows for session {session_key}")
+                data_buffer = []  # clear buffer
+            except Exception as e:
+                print("DB write error:", e)
 
 
 async def main():
-    global DEVICE_ADDRESS, CHAR_UUID, Write_Duration
+    # Get session key from server first
+    session_key = await request_session()
+    if not session_key:
+        print("Could not create session. Exiting.")
+        return
 
+    print(f"Starting data collection with session key: {session_key}")
+    print("Share this session key with the person viewing the data.")
+
+    global DEVICE_ADDRESS, CHAR_UUID, current_session_id
+
+    # Find device
     CHAR_UUID = await find_device()
     if CHAR_UUID == -1:
         print("Device not found.")
@@ -99,18 +129,22 @@ async def main():
     print(f"Using characteristic: {CHAR_UUID}")
 
     async with BleakClient(DEVICE_ADDRESS) as client:
-        print("Connected. Subscribing to notifications...")
+        print(f"Connected. Starting session {session_key}")
         await client.start_notify(CHAR_UUID, notification_handler)
 
-        # Run CSV writer in parallel
-        writer_task = asyncio.create_task(csv_writer())
+        # Run DB writer in parallel
+        writer_task = asyncio.create_task(db_writer())
 
-        # Keep connection alive (adjust duration as needed)
-        await asyncio.sleep(Write_Duration)
+        try:
+            # Run indefinitely until interrupted
+            await asyncio.Event().wait()
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            print(f"Stopping session {session_key}...")
 
         await client.stop_notify(CHAR_UUID)
         writer_task.cancel()
-        print("Stopped.")
+        print(f"Session {session_key} stopped.")
 
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())

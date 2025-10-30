@@ -1,28 +1,71 @@
-from flask import Flask, jsonify, render_template, request, redirect, url_for
+from flask import Flask, jsonify, abort, request
 from flask_cors import CORS
-from markupsafe import escape
-from collections import deque
-import csv
+from supabase import create_client
+from dotenv import load_dotenv
 import os
+import uuid
+from datetime import datetime
 
-app = Flask(__name__) 
-CORS(app) 
+env_path = os.path.join(os.path.dirname(__file__), "..", ".env")
+load_dotenv(env_path) 
 
-@app.route("/")
-def home_page():
-    return render_template("index.html")
+app = Flask(__name__)
+app.secret_key = os.getenv('SECRET_KEY')
+CORS(app)
 
-@app.route("/data")
-def get_data():
-    csv_path = os.path.join(os.path.dirname(__file__), "..", "data", "oximeter_test_data.csv")
-    csv_path = os.path.abspath(csv_path)
-    
-    buffer = deque(maxlen=20)  # ring buffer, max 20 readings
-    
-    with open(csv_path, newline="") as csvfile:
-        reader = csv.DictReader(csvfile)
-        for row in reader:
-            buffer.append(row)  # only last 20 kept automatically
-    
-    return jsonify(list(buffer))
+# Initialize Supabase client
+supabase = create_client(
+    os.getenv('SUPABASE_URL'),
+    os.getenv('SUPABASE_KEY')
+)
+
+@app.route("/session/new", methods=['POST'])
+def create_session():
+    """Create and return a new session key"""
+    try:
+        session_key = str(uuid.uuid4())[:6].upper()
+        
+        # Create session in Supabase
+        result = supabase.table('sessions').insert({
+            'session_key': session_key,
+            'start_time': datetime.utcnow().isoformat()
+        }).execute()
+        
+        return jsonify({
+            'session_key': session_key,
+            'message': 'Session created successfully'
+        })
+    except Exception as e:
+        print(f"Error creating session: {e}")
+        abort(500)
+
+@app.route("/data/<session_key>")
+def get_data(session_key):
+    try:
+        # Get session id
+        session = supabase.table('sessions')\
+            .select('id')\
+            .eq('session_key', session_key)\
+            .execute()\
+            .data
+
+        if not session:
+            abort(404)
+
+        # Get health data
+        result = supabase.table('health_data')\
+            .select('*')\
+            .eq('session_id', session[0]['id'])\
+            .order('timestamp', desc=True)\
+            .limit(50)\
+            .execute()
+
+        return jsonify(result.data)
+    except Exception as e:
+        print(f"Error: {e}")
+        abort(500)
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
 
