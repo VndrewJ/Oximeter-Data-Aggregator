@@ -1,86 +1,257 @@
-import { useState, useEffect } from 'react'
-import { Routes, Route, useNavigate } from 'react-router-dom'
-import './App.css'
+import { useState, useEffect, memo } from 'react';
+import { Routes, Route, useNavigate } from 'react-router-dom';
+import { createClient } from '@supabase/supabase-js';
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ResponsiveContainer
+} from 'recharts';
+import './App.css';
+
+// Create Supabase client for real-time updates only
+const supabase = createClient(
+  import.meta.env.VITE_SUPABASE_URL,
+  import.meta.env.VITE_SUPABASE_ANON_KEY
+);
 
 function Home() {
   const navigate = useNavigate();
+  const [sessionKey, setSessionKey] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!sessionKey.trim()) return;
+
+    setLoading(true);
+    setError('');
+
+    try {
+      const response = await fetch(`http://localhost:5000/data/${sessionKey}`);
+      if (!response.ok) {
+        throw new Error('Invalid session key');
+      }
+      navigate(`/data/${sessionKey}`);
+    } catch (err) {
+      setError('Invalid session key. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <div className="home-container">
       <h1>Welcome to the IoT Oximeter Project</h1>
-      <p>This is the home page of your application.</p>
-      <button onClick={() => navigate('/data')}>Go To Data</button>
+      <p>Enter your session key to view data:</p>
+      <form onSubmit={handleSubmit}>
+        <input
+          type="text"
+          value={sessionKey}
+          onChange={(e) => {
+            setSessionKey(e.target.value.toUpperCase());
+            setError(''); // Clear error when input changes
+          }}
+          placeholder="Enter session key"
+          maxLength={6}
+          style={{ marginRight: '10px' }}
+          disabled={loading}
+        />
+        <button type="submit" disabled={loading}>
+          {loading ? 'Checking...' : 'View Data'}
+        </button>
+      </form>
+      {error && (
+        <p style={{ color: 'red', marginTop: '10px' }}>
+          {error}
+        </p>
+      )}
     </div>
   );
 }
 
+const SpO2Graph = memo(({ data }) => (
+  <div className="vitals-graph">
+    <h3>SpO₂ (%)</h3>
+    <ResponsiveContainer>
+      <LineChart data={data}>
+        <CartesianGrid strokeDasharray="3 3" />
+        <XAxis
+          dataKey="timestamp"
+          tickFormatter={(t) =>
+            new Date(t * 1000).toLocaleTimeString()
+          }
+          label={{ value: "Time", position: "insideBottom", offset: -5 }}
+        />
+        <YAxis domain={[85, 100]} />
+        <Tooltip
+          labelFormatter={(t) =>
+            new Date(t * 1000).toLocaleTimeString()
+          }
+        />
+        <Legend />
+        <Line
+          type="monotone"
+          dataKey="spo2"
+          stroke="#8884d8"
+          name="SpO₂"
+          isAnimationActive={false}
+        />
+      </LineChart>
+    </ResponsiveContainer>
+  </div>
+));
+
+const PulseGraph = memo(({ data }) => (
+  <div className="vitals-graph">
+    <h3>Pulse (BPM)</h3>
+    <ResponsiveContainer>
+      <LineChart data={data}>
+        <CartesianGrid strokeDasharray="3 3" />
+        <XAxis
+          dataKey="timestamp"
+          tickFormatter={(t) =>
+            new Date(t * 1000).toLocaleTimeString()
+          }
+          label={{ value: "Time", position: "insideBottom", offset: -5 }}
+        />
+        <YAxis />
+        <Tooltip
+          labelFormatter={(t) =>
+            new Date(t * 1000).toLocaleTimeString()
+          }
+        />
+        <Legend />
+        <Line
+          type="monotone"
+          dataKey="pulse"
+          stroke="#82ca9d"
+          name="Pulse"
+          isAnimationActive={false}
+        />
+      </LineChart>
+    </ResponsiveContainer>
+  </div>
+));
+
 function DataPage() {
   const navigate = useNavigate();
   const [data, setData] = useState([]);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+  const sessionKey = window.location.pathname.split('/')[2]; // Get session key from URL
+
+  // helper: ensure consistent formatting
+  const formatBuffer = (buffer) =>
+    buffer.map((row, i) => ({
+      timestamp: Number(row["timestamp"]),
+      spo2: Number(row["spo2"]),
+      pulse: Number(row["pulse"]),
+      idx: i
+    }));
 
   useEffect(() => {
-    let isMounted = true;
+    if (!sessionKey) {
+      navigate('/');
+      return;
+    }
 
-    const fetchData = () => {
-      fetch('http://localhost:5000/data')
-        .then(res => {
-          if (!res.ok) throw new Error('Network response was not ok');
-          return res.json();
-        })
-        .then(json => {
-          if (isMounted) {
-            setData(json);
-            setLoading(false);
-            setError(false);
-          }
-        })
-        .catch(() => {
-          if (isMounted) {
-            setError(true);
-            setLoading(false);
-          }
-        });
+    // Get data through backend API
+    const fetchData = async () => {
+      try {
+        const response = await fetch(`http://localhost:5000/data/${sessionKey}`);
+        if (!response.ok) throw new Error('Session not found');
+        const json = await response.json();
+        setData(formatBuffer(json));
+        setError(false);
+      } catch (err) {
+        setError(true);
+      }
     };
 
-    fetchData(); // Initial fetch
-    const interval = setInterval(fetchData, 5000); // Fetch every 5 seconds
+    // Initial fetch
+    fetchData();
+
+    // Subscribe to real-time updates via Supabase real-time
+    const subscription = supabase
+      .channel('health_data_changes')
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'health_data',
+        },
+        // Only fetch new data
+        (payload) => {
+          setData((prev) => {
+            const newRow = payload.new;
+            return [
+              ...prev.slice(-99), // keep last 100 points
+              {
+                timestamp: Number(newRow.timestamp),
+                spo2: Number(newRow.spo2),
+                pulse: Number(newRow.pulse),
+              },
+            ];
+          });
+        }
+      )
+      .subscribe();
 
     return () => {
-      isMounted = false;
-      clearInterval(interval);
+      subscription.unsubscribe();
     };
-  }, []);
+  }, [sessionKey, navigate]);
 
-  const recentData = [...data].reverse();
+  // Sort once: oldest → newest
+  const ascending = [...data].sort((a, b) => a.timestamp - b.timestamp);
+
+  // Graph wants oldest → newest (natural order)
+  const graphData = ascending;
+
+  // Table wants newest → oldest (but only last 20)
+  const tableData = ascending.slice(-20).reverse();
+
 
   return (
     <div>
-      <h2>Current Oximeter Data</h2>
-      {loading ? (
-        <p>Loading...</p>
-      ) : error ? (
-        <p style={{ color: 'red' }}>Error getting data. Please try again later.</p>
+      <h2>Session: {sessionKey}</h2>
+      {error ? (
+        <p style={{ color: 'red' }}>
+          Error connecting to server. Please try again later.
+        </p>
+      ) : data.length === 0 ? (
+        <p>Waiting for data...</p>
       ) : (
-        <table style={{ margin: '0 auto' }}>
-          <thead>
-            <tr>
-              {data[0] && Object.keys(data[0]).map(key => (
-                <th key={key}>{key}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {recentData.map((row, idx) => (
-              <tr key={idx}>
-                {Object.values(row).map((val, i) => (
-                  <td key={i}>{val}</td>
-                ))}
+        <>
+          {/* Table - uses sortedData (newest first) */}
+          <table class="vitals-table" style={{ margin: '0 auto' }}>
+            <thead>
+              <tr>
+                <th>Timestamp</th>
+                <th>SpO₂ (%)</th>
+                <th>Pulse (BPM)</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {tableData.map((row, idx) => (
+                <tr key={idx}>
+                  <td>{new Date(row.timestamp * 1000).toLocaleTimeString()}</td>
+                  <td>{row.spo2}</td>
+                  <td>{row.pulse}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          <SpO2Graph data={graphData} />
+          <PulseGraph data={graphData} />
+        </>
       )}
       <button onClick={() => navigate('/')}>Go Back Home</button>
     </div>
@@ -91,9 +262,9 @@ function App() {
   return (
     <Routes>
       <Route path="/" element={<Home />} />
-      <Route path="/data" element={<DataPage />} />
+      <Route path="/data/:sessionKey" element={<DataPage />} />
     </Routes>
   );
 }
 
-export default App
+export default App;
